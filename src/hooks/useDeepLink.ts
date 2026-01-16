@@ -8,16 +8,19 @@ import { supabase } from '../lib/supabase';
 
 interface UseDeepLinkProps {
   onAuthCallback?: (accessToken: string, refreshToken: string) => void;
+  onCheckoutReturn?: () => void;
 }
 
-export function useDeepLink({ onAuthCallback }: UseDeepLinkProps = {}) {
-  // Usa ref para evitar re-registrar o listener quando o callback muda
-  const callbackRef = useRef(onAuthCallback);
+export function useDeepLink({ onAuthCallback, onCheckoutReturn }: UseDeepLinkProps = {}) {
+  // Usa refs para evitar re-registrar o listener quando os callbacks mudam
+  const authCallbackRef = useRef(onAuthCallback);
+  const checkoutCallbackRef = useRef(onCheckoutReturn);
 
-  // Atualiza a ref quando o callback muda
+  // Atualiza as refs quando os callbacks mudam
   useEffect(() => {
-    callbackRef.current = onAuthCallback;
-  }, [onAuthCallback]);
+    authCallbackRef.current = onAuthCallback;
+    checkoutCallbackRef.current = onCheckoutReturn;
+  }, [onAuthCallback, onCheckoutReturn]);
 
   useEffect(() => {
     // Só registra listeners em plataforma nativa
@@ -36,6 +39,7 @@ export function useDeepLink({ onAuthCallback }: UseDeepLinkProps = {}) {
           const accessToken = urlObj.searchParams.get('access_token');
           const refreshToken = urlObj.searchParams.get('refresh_token');
 
+          // Se tem tokens, é login OAuth
           if (accessToken && refreshToken) {
             console.log('[DeepLink] Auth tokens received');
 
@@ -54,11 +58,15 @@ export function useDeepLink({ onAuthCallback }: UseDeepLinkProps = {}) {
             }
 
             // Chama callback customizado se fornecido (via ref)
-            if (callbackRef.current) {
-              callbackRef.current(accessToken, refreshToken);
+            if (authCallbackRef.current) {
+              authCallbackRef.current(accessToken, refreshToken);
             }
           } else {
-            console.warn('[DeepLink] Missing tokens in URL');
+            // Sem tokens = retorno do checkout (pagamento concluído)
+            console.log('[DeepLink] Checkout return detected, refreshing subscription');
+            if (checkoutCallbackRef.current) {
+              checkoutCallbackRef.current();
+            }
           }
         } catch (error) {
           console.error('[DeepLink] Error parsing URL:', error);

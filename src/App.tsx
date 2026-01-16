@@ -26,11 +26,17 @@ export default function App() {
   // Configura Deep Linking para receber callback do checkout
   useDeepLink({
     onAuthCallback: async () => {
+      // Callback de OAuth login
+      await refreshProfile();
+    },
+    onCheckoutReturn: async () => {
+      // Callback de retorno do checkout (pagamento concluído)
+      console.log('[App] Checkout return - refreshing subscription');
       // Aguarda um pouco para o banco processar
       setTimeout(async () => {
         await refreshProfile();
         setShowVoicePopup(false);
-      }, 1000);
+      }, 1500);
     },
   });
 
