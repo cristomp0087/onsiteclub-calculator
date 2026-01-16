@@ -128,39 +128,13 @@ export function useAuth(): UseAuthReturn {
 
     loadSession();
 
-    // Listener para mudanças na autenticação
+    // Listener para mudanças na autenticação - apenas SIGNED_OUT e SIGNED_IN
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('[Auth] Auth state changed:', event, 'hasUser:', !!session?.user);
+      (event) => {
+        console.log('[Auth] Auth state changed:', event);
 
-        // Ignora todos os eventos iniciais - vamos carregar a sessão manualmente
-        if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
-          console.log('[Auth] Ignoring automatic event:', event);
-          return;
-        }
-
-        if (!mounted) {
-          console.log('[Auth] Component unmounted, ignoring event');
-          return;
-        }
-
-        console.log('[Auth] Processing auth event:', event);
-
-        if (session?.user) {
-          const profile = await fetchProfile(session.user.id);
-
-          if (!mounted) return;
-
-          const hasVoiceAccess = await checkVoiceAccessAsync();
-
-          setAuthState({
-            user: session.user,
-            profile,
-            session,
-            loading: false,
-            hasVoiceAccess,
-          });
-        } else {
+        // Só processa SIGNED_OUT para limpar estado
+        if (event === 'SIGNED_OUT') {
           setAuthState({
             user: null,
             profile: null,
@@ -168,6 +142,11 @@ export function useAuth(): UseAuthReturn {
             loading: false,
             hasVoiceAccess: false,
           });
+        }
+
+        // Para SIGNED_IN, recarrega a sessão
+        if (event === 'SIGNED_IN' && mounted) {
+          loadSession();
         }
       }
     );

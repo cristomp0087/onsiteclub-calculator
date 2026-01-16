@@ -4,7 +4,6 @@
 import { useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { useCalculator, useOnlineStatus, useVoiceRecorder } from '../hooks';
-import { calculate } from '../lib/calculator';
 import type { VoiceState, VoiceResponse } from '../types/calculator';
 
 // Teclado de frações
@@ -58,6 +57,7 @@ export default function Calculator({
   const {
     expression,
     setExpression,
+    setExpressionAndCompute,
     displayValue,
     lastResult,
     compute,
@@ -103,18 +103,18 @@ export default function Calculator({
       console.log('[Voice] API response:', data);
 
       if (data.expression) {
-        setExpression(data.expression);
-        const result = calculate(data.expression);
+        // Usa setExpressionAndCompute para atualizar expressão E calcular o resultado
+        const result = setExpressionAndCompute(data.expression);
         console.log('[Voice] Calculation result:', result);
       } else if (data.error) {
-        console.error('[Voice] API returned error:', data.raw);
+        console.error('[Voice] API returned error:', data.error);
       }
     } catch (error) {
       console.error('[Voice] Error:', error);
     } finally {
       setVoiceState('idle');
     }
-  }, [setExpression, setVoiceState]);
+  }, [setExpressionAndCompute, setVoiceState]);
 
   const { startRecording, stopRecording } = useVoiceRecorder({
     onRecordingComplete: handleAudioUpload,
@@ -124,17 +124,24 @@ export default function Calculator({
     },
   });
 
-  // Voice button handlers
+  // Voice button handlers - simplificado para máxima confiabilidade
+  // Aperta = começa a gravar, Solta = para e processa
   const handleVoiceStart = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
-    if (!isOnline) return;
-    
+    e.stopPropagation();
+
+    // Bloqueia se offline ou processando
+    if (!isOnline || voiceState === 'processing') return;
+
+    // Se não tem acesso, mostra popup de upgrade
     if (!hasVoiceAccess) {
       onVoiceUpgradeClick();
       return;
     }
-    
+
+    // Só inicia se estiver idle
     if (voiceState === 'idle') {
+      console.log('[Voice] START - Recording initiated');
       setVoiceState('recording');
       startRecording();
     }
@@ -142,8 +149,13 @@ export default function Calculator({
 
   const handleVoiceEnd = (e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+
+    // Só para se estiver gravando
     if (voiceState === 'recording') {
+      console.log('[Voice] END - Stopping recording, will process');
       stopRecording();
+      // O estado muda para 'processing' no handleAudioUpload quando receber o blob
     }
   };
 
@@ -190,16 +202,14 @@ export default function Calculator({
   const getVoiceButtonText = () => {
     if (!isOnline) return 'Offline';
     if (!hasVoiceAccess) return '🔒 Upgrade to Voice';
-    if (voiceState === 'recording') return '🎤 Listening...';
-    if (voiceState === 'processing') return '🧠 Thinking...';
-    return '🎙️ Hold to Speak';
+    if (voiceState === 'recording') return 'Listening...';
+    if (voiceState === 'processing') return 'Processing...';
+    return 'Hold to Speak';
   };
 
-  // Feedback visual acima do botão
+  // Feedback visual acima do botão (removido para não mover o botão)
   const getVoiceFeedback = () => {
-    if (voiceState === 'recording') return '🔴 Speak now...';
-    if (voiceState === 'processing') return 'Processing your voice...';
-    return '';
+    return ''; // Desativado para manter o botão fixo
   };
 
   // Classes CSS do botão
@@ -278,11 +288,13 @@ export default function Calculator({
           <button
             className={getVoiceButtonClass()}
             disabled={!isOnline || voiceState === 'processing'}
-            onMouseDown={handleVoiceStart}
-            onMouseUp={handleVoiceEnd}
-            onMouseLeave={voiceState === 'recording' ? handleVoiceEnd : undefined}
             onTouchStart={handleVoiceStart}
             onTouchEnd={handleVoiceEnd}
+            onTouchCancel={handleVoiceEnd}
+            onMouseDown={handleVoiceStart}
+            onMouseUp={handleVoiceEnd}
+            onMouseLeave={handleVoiceEnd}
+            style={{ touchAction: 'none' }}
           >
             <span className="voice-icon">
               {voiceState === 'recording' ? (

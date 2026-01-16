@@ -23,8 +23,6 @@ export interface Token {
 }
 
 export interface VoiceResponse {
-  mode: 'inches' | 'normal';
   expression: string;
-  error?: boolean;
-  raw?: string;
+  error?: string;
 }

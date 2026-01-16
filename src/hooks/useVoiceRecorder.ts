@@ -1,8 +1,7 @@
 // src/hooks/useVoiceRecorder.ts
-// Hook para gravação de áudio para voice input
+// Hook para gravação de áudio - SPEC V7
 
 import { useState, useRef, useCallback } from 'react';
-import { Capacitor } from '@capacitor/core';
 
 interface UseVoiceRecorderOptions {
   onRecordingComplete: (audioBlob: Blob) => void;
@@ -16,39 +15,8 @@ interface UseVoiceRecorderReturn {
 }
 
 /**
- * Solicita permissão de microfone
- * Em plataformas nativas, usa a API de permissões do navegador que dispara o diálogo do Android
- */
-async function requestMicrophonePermission(): Promise<boolean> {
-  try {
-    // Verifica se já tem permissão
-    if (navigator.permissions) {
-      const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-      console.log('[VoiceRecorder] Current permission state:', result.state);
-
-      if (result.state === 'granted') {
-        return true;
-      }
-    }
-
-    // Solicita permissão tentando acessar o microfone
-    // Isso dispara o diálogo de permissão do Android
-    console.log('[VoiceRecorder] Requesting microphone permission...');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    // Permissão concedida, fecha o stream imediatamente
-    stream.getTracks().forEach(track => track.stop());
-    console.log('[VoiceRecorder] Permission granted');
-    return true;
-  } catch (err) {
-    console.error('[VoiceRecorder] Permission denied or error:', err);
-    return false;
-  }
-}
-
-/**
  * Hook para gravar áudio do microfone
- * Usado para voice input na calculadora
+ * Baseado no Gold Calculator spec V7
  */
 export function useVoiceRecorder({
   onRecordingComplete,
@@ -56,54 +24,42 @@ export function useVoiceRecorder({
 }: UseVoiceRecorderOptions): UseVoiceRecorderReturn {
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
   const [isRecording, setIsRecording] = useState(false);
 
   const startRecording = useCallback(async () => {
     try {
-      // Em plataforma nativa, solicita permissão primeiro
-      if (Capacitor.isNativePlatform()) {
-        const hasPermission = await requestMicrophonePermission();
-        if (!hasPermission) {
-          throw new Error('Microphone permission denied. Please allow microphone access in your device settings.');
-        }
-      }
-
+      // Solicita acesso ao microfone
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
       const recorder = new MediaRecorder(stream);
       audioChunks.current = [];
 
       recorder.ondataavailable = (event) => {
-        console.log('[VoiceRecorder] Data available, size:', event.data.size);
         if (event.data.size > 0) {
           audioChunks.current.push(event.data);
         }
       };
 
       recorder.onstop = () => {
-        console.log('[VoiceRecorder] Recording stopped, chunks:', audioChunks.current.length);
-        const totalSize = audioChunks.current.reduce((acc, chunk) => acc + chunk.size, 0);
-        console.log('[VoiceRecorder] Total audio size:', totalSize, 'bytes');
-
         const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' });
-        console.log('[VoiceRecorder] Created blob, size:', audioBlob.size);
         onRecordingComplete(audioBlob);
 
-        // Limpa as faixas de áudio para desligar o microfone
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      recorder.onerror = (event) => {
-        console.error('[VoiceRecorder] Recorder error:', event);
+        // Limpa o stream
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
       };
 
       mediaRecorder.current = recorder;
-      // Request data every 1 second to ensure we capture audio
-      recorder.start(1000);
-      console.log('[VoiceRecorder] Recording started with timeslice 1000ms');
+      recorder.start();
       setIsRecording(true);
+
     } catch (err) {
+      console.error('[Audio] Error accessing mic:', err);
       const error = err instanceof Error ? err : new Error('Failed to access microphone');
-      console.error('[VoiceRecorder] Error:', error);
       onError?.(error);
     }
   }, [onRecordingComplete, onError]);

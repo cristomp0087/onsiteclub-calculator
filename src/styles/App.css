@@ -225,6 +225,7 @@
 /* Voice Button - Estados visuais melhorados */
 .voice-btn {
   width: 100%;
+  min-height: 48px; /* Altura fixa para não mover */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -239,8 +240,10 @@
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: manipulation;
-  transition: all 0.15s ease-out;
+  -webkit-touch-callout: none;
+  touch-action: none; /* Previne gestos do navegador */
+  transition: background 0.15s ease-out, border-color 0.15s ease-out, color 0.15s ease-out;
+  /* NÃO usar transition em transform para evitar movimento */
 }
 
 .voice-btn:disabled {
@@ -253,8 +256,8 @@
   background: #FDB913;
   border-color: #E5A811;
   color: #0E1A2A;
-  transform: scale(1.02);
-  box-shadow: 0 4px 20px rgba(253, 185, 19, 0.5);
+  /* Removido transform para não mover o botão */
+  box-shadow: 0 0 0 4px rgba(253, 185, 19, 0.3);
 }
 
 /* Estado: Processando - Teal com animação de pulso */
@@ -268,11 +271,9 @@
 @keyframes pulse-thinking {
   0%, 100% {
     opacity: 1;
-    transform: scale(1);
   }
   50% {
-    opacity: 0.85;
-    transform: scale(0.98);
+    opacity: 0.7;
   }
 }
 
@@ -290,14 +291,9 @@
   justify-content: center;
 }
 
-/* Animação do ícone quando gravando */
+/* Ícone quando gravando - sem animação de movimento */
 .voice-btn.listening .voice-icon {
-  animation: pulse-recording 0.8s ease-in-out infinite;
-}
-
-@keyframes pulse-recording {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.15); }
+  color: #0E1A2A;
 }
 
 .voice-text {

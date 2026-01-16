@@ -7,10 +7,11 @@ import { calculate, type CalculationResult } from '../lib/calculator';
 interface UseCalculatorReturn {
   expression: string;
   setExpression: (value: string) => void;
+  setExpressionAndCompute: (value: string) => CalculationResult | null;
   displayValue: string;
   lastResult: CalculationResult | null;
   justCalculated: boolean;
-  
+
   // Ações
   compute: () => CalculationResult | null;
   clear: () => void;
@@ -105,9 +106,22 @@ export function useCalculator(): UseCalculatorReturn {
     setJustCalculated(false);
   }, []);
 
+  // Seta expressão e calcula imediatamente (para voice input)
+  const setExpressionAndCompute = useCallback((value: string) => {
+    setExpression(value);
+    const result = calculate(value);
+    if (result) {
+      setDisplayValue(result.resultFeetInches);
+      setLastResult(result);
+      setJustCalculated(true);
+    }
+    return result;
+  }, []);
+
   return {
     expression,
     setExpression: handleSetExpression,
+    setExpressionAndCompute,
     displayValue,
     lastResult,
     justCalculated,

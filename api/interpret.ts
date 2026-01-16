@@ -52,44 +52,44 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
-// System prompt para GPT
-const SYSTEM_PROMPT = `You are a parser for a construction calculator that handles MULTIPLE operations.
+// System prompt para GPT - SPEC V7
+const SYSTEM_PROMPT = `You are a parser for a construction calculator.
+Convert spoken phrases into mathematical expressions.
+Return ONLY valid JSON: {"expression":"..."}
 
-Your job: Convert the spoken phrase into a mathematical expression string.
-Return ONLY valid JSON.
+FORMAT RULES:
+- Operators: + - * /
+- Fractions: 1/2, 3/8, 1/16 (NO spaces around /)
+- Mixed numbers: whole SPACE fraction → "5 1/2", "3 3/4"
+- Feet: apostrophe → "2'" or "2' 6"
+- Inches: can be implicit or with quote → 5 or 5"
 
-OUTPUT FORMAT:
-{"mode":"inches","expression":"5 1/2 + 3 1/4 - 2"}
+LANGUAGE (PT/EN/ES/FR):
+- "cinco e meio" / "five and a half" → "5 1/2"
+- "três pés e duas" / "three feet two" → "3' 2"
+- "metade de" / "half of" → "/ 2"
+- "dobro" / "double" → "* 2"
 
-RULES FOR EXPRESSION:
-- Use standard operators: + - * /
-- Fractions: write as "1/2", "3/8", "1/16" etc
-- Mixed numbers: whole + space + fraction: "5 1/2", "3 3/4"
-- Feet: use apostrophe: "2'" or "2' 6"
-- Multiple operations are allowed: "5 1/2 + 3 - 1/4 * 2"
-- All numbers are assumed to be inches unless marked with '
+FRACTION WORDS:
+- meio/half = 1/2
+- um quarto/quarter = 1/4
+- três quartos/three quarters = 3/4
+- um oitavo/eighth = 1/8
+- três oitavos/three eighths = 3/8
+- um dezesseis avos/sixteenth = 1/16
 
-LANGUAGE HANDLING (English, Portuguese, Spanish, French):
-- "five and a half plus three and a quarter minus two" → "5 1/2 + 3 1/4 - 2"
-- "cinco e meio mais três e um quarto menos dois" → "5 1/2 + 3 1/4 - 2"
-- "três pés e duas polegadas" → "3' 2"
-- "half of" or "metade de" = "* 1/2" or "/ 2"
-- "double" or "dobro" = "* 2"
-
-COMMON CONSTRUCTION TERMS:
-- "e meio" / "and a half" = 1/2
-- "e um quarto" / "and a quarter" = 1/4
-- "e três quartos" / "and three quarters" = 3/4
-- "e três oitavos" / "and three eighths" = 3/8
-- "fit" (spoken) = feet (')
-
-FIX SPEECH ERRORS:
-- "103/8" → "10 3/8"
+FIX COMMON SPEECH ERRORS:
+- "103/8" → "10 3/8" (missing space)
 - "51/2" → "5 1/2"
-- Double digits followed by fraction usually means mixed number
+- "fit"/"feet" spoken unclearly → use '
+- Numbers run together → separate intelligently
 
-Return mode:"inches" for any expression with fractions or construction measurements.
-Return mode:"normal" ONLY for pure arithmetic without fractions.`;
+EXAMPLES:
+"cinco e meio mais três e um quarto" → {"expression":"5 1/2 + 3 1/4"}
+"ten and three eighths minus two" → {"expression":"10 3/8 - 2"}
+"três pés e seis" → {"expression":"3' 6"}
+"dobro de cinco" → {"expression":"5 * 2"}
+"metade de dez e meio" → {"expression":"10 1/2 / 2"}`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -176,7 +176,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const audioBlob = new Blob([audioData], { type: 'audio/webm' });
     formData.append('file', audioBlob, filename);
     formData.append('model', 'whisper-1');
-    formData.append('prompt', 'Construction measurements: inches, feet, fractions like 1/2, 3/8, 1/4. Portuguese: polegada, pé, meio.');
+    formData.append('language', 'pt'); // Prioritize Portuguese but Whisper auto-detects
+    formData.append('prompt', 'Medidas de construção: polegadas, pés, frações como 1/2, 3/8, 1/4, 5/8, 7/8. Palavras: meio, quarto, oitavo, pé, polegada, mais, menos, vezes, dividido. Construction measurements: inches, feet, fractions.');
 
     const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -205,13 +206,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         temperature: 0,
         max_tokens: 150,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `Parse this transcription: "${transcribedText}"` }
+          { role: 'user', content: transcribedText }
         ]
       }),
     });

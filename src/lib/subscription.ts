@@ -7,7 +7,6 @@ import { Capacitor } from '@capacitor/core';
 
 const SUBSCRIPTION_CACHE_KEY = 'calculator_subscription_status';
 const CACHE_DURATION = 1000 * 60 * 5; // 5 minutos
-const AUTH_HUB_API = 'https://auth.onsiteclub.ca/api/subscription/status?app=calculator';
 
 // Cache em memória como fallback
 let memoryCache: CachedSubscription | null = null;
@@ -78,37 +77,6 @@ async function setCache(data: CachedSubscription): Promise<void> {
 }
 
 /**
- * Verifica status via API do Auth Hub
- * Usa credentials: 'include' para enviar cookies de autenticação
- */
-async function checkViaAuthHub(): Promise<boolean> {
-  try {
-    console.log('[Subscription] Checking via Auth Hub API...');
-
-    const response = await fetch(AUTH_HUB_API, {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      console.warn('[Subscription] Auth Hub API returned:', response.status);
-      return false;
-    }
-
-    const data = await response.json();
-    console.log('[Subscription] Auth Hub response:', data);
-
-    return data.hasAccess === true;
-  } catch (err) {
-    console.warn('[Subscription] Auth Hub API error:', err);
-    return false;
-  }
-}
-
-/**
  * Verifica se o usuário tem assinatura ativa no Supabase
  * Consulta diretamente a tabela 'subscriptions'
  */
@@ -167,7 +135,7 @@ export async function hasActiveSubscription(): Promise<boolean> {
 
 /**
  * Verifica acesso premium com cache local
- * Tenta Auth Hub API primeiro, depois Supabase como fallback
+ * Usa apenas Supabase como fonte de verdade (tabela subscriptions)
  */
 export async function checkPremiumAccess(): Promise<boolean> {
   // Evita chamadas simultâneas
@@ -189,18 +157,13 @@ export async function checkPremiumAccess(): Promise<boolean> {
         console.log('[Subscription] Using cached status:', cached.hasAccess);
         return cached.hasAccess;
       } else {
-        console.log('[Subscription] Cache expired, checking server');
+        console.log('[Subscription] Cache expired, checking Supabase');
       }
     }
 
-    // Tentar Auth Hub API primeiro
-    let hasAccess = await checkViaAuthHub();
-
-    // Se Auth Hub falhar, tentar Supabase como fallback
-    if (!hasAccess) {
-      console.log('[Subscription] Auth Hub returned false, trying Supabase fallback');
-      hasAccess = await hasActiveSubscription();
-    }
+    // Verifica direto no Supabase (tabela subscriptions)
+    const hasAccess = await hasActiveSubscription();
+    console.log('[Subscription] Supabase check result:', hasAccess);
 
     // Salvar no cache
     await setCache({

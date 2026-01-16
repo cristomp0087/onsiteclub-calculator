@@ -380,15 +380,18 @@ export function calculate(expression: string): CalculationResult | null {
     const hasInchContent = /['"]|\d+\/\d+/.test(expr);
     
     // Se não tem conteúdo de polegadas, tenta matemática pura
+    // MAS também mostra conversão para pés/polegadas (útil para medidas)
     if (!hasInchContent) {
       const pureResult = calculatePureMath(expr);
       if (pureResult !== null && isFinite(pureResult)) {
+        // Sempre mostra ambos os formatos: pés/polegadas E polegadas totais
+        // Isso é útil para construção: 27 = 2' 3" = 27 In
         return {
-          resultFeetInches: formatNumber(pureResult),
-          resultTotalInches: formatNumber(pureResult),
+          resultFeetInches: formatInches(pureResult),
+          resultTotalInches: formatTotalInches(pureResult),
           resultDecimal: pureResult,
           expression: expr,
-          isInchMode: false
+          isInchMode: true  // Sempre true para mostrar ambas as telas
         };
       }
     }

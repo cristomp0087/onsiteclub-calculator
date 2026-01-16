@@ -61,7 +61,8 @@ export default function App() {
       {showVoicePopup && (
         <VoiceUpgradePopup
           onClose={() => setShowVoicePopup(false)}
-          userEmail={profile?.email}
+          userEmail={profile?.email || user?.email}
+          userId={user?.id}
         />
       )}
 

@@ -1,7 +1,8 @@
-# OnSite Calculator — Arquitetura v3.0 (Full System Map)
+# OnSite Calculator — Arquitetura v4.0 (Full System Map)
 
-**STATUS:** ✅ Mapeamento completo (Core + Hooks + UI + Auth/Paywall + Voz)  
-**OBJETIVO:** Documentação técnica profunda para **evitar duplicação de lógica**, garantir consistência e permitir que uma IA faça alterações sem criar “arquiteturas paralelas”.
+**STATUS:** ✅ Mapeamento completo (Core + Hooks + UI + Auth/Paywall + Voz + Android Native)
+**ÚLTIMA ATUALIZAÇÃO:** 2026-01-16
+**OBJETIVO:** Documentação técnica profunda para **evitar duplicação de lógica**, garantir consistência e permitir que uma IA faça alterações sem criar "arquiteturas paralelas".
 
 ---
 
@@ -96,16 +97,15 @@
 ```
 
 ### 3.2 AuthScreen (Login/Signup)
+```
 ┌──────────────────────────────┐
-│ Email │
-│ Password │
-│ Trade (dropdown) │
-│ Name │
-│ [Login] [Sign Up] │
+│ Email                        │
+│ Password                     │
+│ Trade (dropdown)             │
+│ Name                         │
+│ [Login] [Sign Up]            │
 └──────────────────────────────┘
-
-markdown
-Copy code
+```
 
 ---
 
@@ -245,10 +245,14 @@ Regex: `/'|"|\d+\/\d+/`
   - `signUp()`: Criar conta
   - `signOut()`: Logout
   - `refreshProfile()`: Atualizar perfil após checkout
-- **⚠️ Importante**:
+- **⚠️ Importante (v4.0)**:
   - useEffect com `[]` (sem dependências) para evitar loops infinitos
-  - Ignora eventos `INITIAL_SESSION` e `SIGNED_IN` do Supabase
+  - Listener `onAuthStateChange` simplificado:
+    - `SIGNED_OUT`: Limpa estado imediatamente
+    - `SIGNED_IN`: Chama `loadSession()` para recarregar
+    - Outros eventos são ignorados
   - `refreshProfile` não tem dependências para evitar re-renders
+  - Verificação de `hasVoiceAccess` usa apenas Supabase (tabela `subscriptions`)
 
 **`useDeepLink` (Deep Linking)**
 - **Arquivo**: `src/hooks/useDeepLink.ts`
@@ -258,9 +262,18 @@ Regex: `/'|"|\d+\/\d+/`
   - useEffect com `[]` (sem dependências)
   - Só ativo em plataforma nativa (Capacitor)
 
-**`useVoiceRecorder` (Gravação de Voz)**
+**`useVoiceRecorder` (Gravação de Voz)** - SPEC V7
+- **Arquivo**: `src/hooks/useVoiceRecorder.ts`
 - **Responsabilidade**: MediaRecorder, blobs, permissões
 - **Estado**: `VoiceState = 'idle' | 'recording' | 'processing'`
+- **Fluxo simplificado (v4.0)**:
+  1. `startRecording()`: Solicita microfone, cria MediaRecorder, inicia gravação
+  2. `stopRecording()`: Para gravação, gera Blob, chama `onRecordingComplete`
+  3. Blob enviado para API `/api/interpret`
+- **⚠️ Importante**:
+  - Não usa `timeslice` no MediaRecorder (coleta chunks via `ondataavailable`)
+  - Limpa stream após parar (`track.stop()`)
+  - Formato de saída: `audio/webm`
 
 **`useOnlineStatus` (Status de Conexão)**
 - **Responsabilidade**: Listeners `window.online/offline`
@@ -268,24 +281,96 @@ Regex: `/'|"|\d+\/\d+/`
 
 ---
 
-## 7) 🎙️ Sistema de Voz (IA) — pipeline e contratos
+## 7) 🎙️ Sistema de Voz (IA) — SPEC V7
 
 ### Objetivo
 Transformar voz em expressão válida **sem bypassar o motor**.
 
-**Pipeline (conceitual)**
-1) **Record**: grava áudio (hook)
-2) **Transcribe (IA)**: áudio → texto
-3) **Parse**: texto → expressão (`"one foot six and a half + five"` → `"1' 6 1/2\" + 5"`)
-4) **Calculate**: expressão → `CalculationResult`
-5) **Render**: UI exibe
+### 7.1 Pipeline Completo (v4.0)
 
-### Estado padrão da voz
-- `VoiceState = 'idle' | 'recording' | 'processing'`
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   RECORD    │───▶│  WHISPER    │───▶│   GPT-4o    │───▶│  CALCULATE  │
+│  (WebM)     │    │ (Transcrição)│    │  (Parse)    │    │  (Engine)   │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+     App                API                 API               App
+```
 
-### Regras
+1. **Record** (App - `useVoiceRecorder`):
+   - Usuário segura botão → `startRecording()`
+   - Solta botão → `stopRecording()` → Blob WebM
+
+2. **Upload** (App - `Calculator.tsx`):
+   - `handleAudioUpload()` envia FormData para API
+   - Endpoint: `https://calculator.onsiteclub.ca/api/interpret` (nativo) ou `/api/interpret` (web)
+
+3. **Transcribe** (API - `api/interpret.ts`):
+   - OpenAI Whisper (`whisper-1`)
+   - Prompt otimizado para português/inglês
+   - Retorna texto transcrito
+
+4. **Parse** (API - `api/interpret.ts`):
+   - OpenAI GPT-4o (não mini!)
+   - System prompt SPEC V7 (multilíngue)
+   - Retorna JSON: `{"expression": "5 1/2 + 3 1/4"}`
+
+5. **Calculate** (App - `useCalculator`):
+   - `setExpressionAndCompute(expression)`
+   - Engine calcula e atualiza display
+
+### 7.2 API Endpoint (`api/interpret.ts`)
+
+**Localização**: `api/interpret.ts` (Vercel Serverless Function)
+
+**Configuração**:
+- Modelo Whisper: `whisper-1`
+- Modelo GPT: `gpt-4o` (temperature: 0)
+- CORS: Permite origens do app + Capacitor
+
+**System Prompt SPEC V7**:
+```
+You are a parser for a construction calculator.
+Convert spoken phrases into mathematical expressions.
+Return ONLY valid JSON: {"expression":"..."}
+
+FORMAT RULES:
+- Operators: + - * /
+- Fractions: 1/2, 3/8, 1/16 (NO spaces around /)
+- Mixed numbers: whole SPACE fraction → "5 1/2", "3 3/4"
+- Feet: apostrophe → "2'" or "2' 6"
+
+LANGUAGE (PT/EN/ES/FR):
+- "cinco e meio" / "five and a half" → "5 1/2"
+- "três pés e duas" / "three feet two" → "3' 2"
+
+FIX COMMON SPEECH ERRORS:
+- "103/8" → "10 3/8" (missing space)
+- "51/2" → "5 1/2"
+```
+
+### 7.3 Estados da Voz
+```
+idle → recording → processing → idle
+         ↓              ↓
+      (gravando)    (API call)
+```
+
+### 7.4 Botão de Voz (UX)
+
+**Estados visuais**:
+- `idle`: "Hold to Speak" + ícone microfone
+- `recording`: "Listening..." + círculo preenchido (amarelo)
+- `processing`: "Processing..." + spinner
+
+**Regras de UX**:
+- Botão NÃO move durante interação (`min-height: 48px`, sem transform)
+- `touch-action: none` para evitar conflitos
+- Eventos: `onTouchStart/End`, `onMouseDown/Up/Leave`
+
+### 7.5 Regras
 - A voz **não calcula**. A voz **só gera expressão**.
 - A expressão final sempre passa por `calculate()` (fonte única).
+- API endpoint varia: nativo usa URL completa, web usa path relativo.
 
 ---
 
@@ -311,30 +396,58 @@ export interface UserProfile {
   subscription_status: 'trialing' | 'active' | 'canceled';
   trial_ends_at: string;
 }
-8.3 Gate do Voice (pago)
-Onde aplicar
+```
 
-Calculator.tsx recebe hasVoiceAccess e voiceState
+### 8.3 Tabela `subscriptions` (Verificação de Acesso)
 
-Se não tiver acesso:
+**Estrutura**:
+```ts
+interface SubscriptionData {
+  id: string;
+  user_id: string;           // UUID do Supabase Auth
+  app: string;               // 'calculator'
+  status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'inactive';
+  current_period_end?: string;
+  cancel_at_period_end?: boolean;
+}
+```
 
-botão de mic abre VoiceUpgradePopup.tsx
+**Verificação de acesso** (`src/lib/subscription.ts`):
+- Fonte única: tabela `subscriptions` no Supabase
+- Cache local: 5 minutos (memória + Capacitor Preferences)
+- Status válidos: `active` ou `trialing`
+- Também verifica `current_period_end` não expirado
 
-8.4 Stripe Checkout
-VoiceUpgradePopup.tsx
+### 8.4 Gate do Voice (pago)
 
-Objetivo: paywall + redirect para checkout
+**Onde aplicar**:
+- `Calculator.tsx` recebe `hasVoiceAccess` e `voiceState`
+- Se não tiver acesso → botão de mic abre `VoiceUpgradePopup.tsx`
 
-URL vem de env var (ex.: VITE_STRIPE_CHECKOUT_URL)
+### 8.5 Checkout Externo
 
-Se existir backend/webhook para atualizar subscription_status, documente aqui quando estiver pronto.
-Se ainda não existe, declare explicitamente “não implementado”.
+**VoiceUpgradePopup.tsx**:
+- URL: `https://auth.onsiteclub.ca/checkout/calculator`
+- Parâmetros enviados:
+  - `user_id`: UUID do Supabase (identificador único e seguro)
+  - `prefilled_email`: Email para pré-preencher formulário
+  - `redirect`: `onsitecalculator://auth-callback`
 
-9) 📦 Tipagem global (src/types/calculator.ts)
+**Fluxo**:
+1. Usuário clica "Start Free Trial"
+2. Abre browser externo com URL do checkout
+3. Usuário completa pagamento no `auth.onsiteclub.ca`
+4. Checkout grava na tabela `subscriptions` usando `user_id`
+5. Redirect via deep link para o app
+6. App verifica `subscriptions` e libera Voice
+
+**⚠️ Importante**: O `user_id` é o identificador seguro. O checkout DEVE usar esse ID para associar a compra ao usuário correto.
+
+## 9) 📦 Tipagem global (`src/types/calculator.ts`)
+
 Contratos compartilhados entre engine e UI.
 
-ts
-Copy code
+```ts
 export interface CalculationResult {
   resultFeetInches: string;  // "1' 6 1/2\""
   resultTotalInches: string; // "18 1/2 In"
@@ -344,50 +457,62 @@ export interface CalculationResult {
 }
 
 export type VoiceState = 'idle' | 'recording' | 'processing';
-10) ⚙️ Fluxo de dados (Data Flow) — exemplo real
-Usuário clica em 1/2" no Calculator.tsx
+```
 
-Calculator chama appendFraction("1/2\"") do hook useCalculator
+---
 
-useCalculator atualiza expression (ex.: "5" → "5 1/2")
+## 10) ⚙️ Fluxo de dados (Data Flow) — exemplo real
 
-Usuário clica =
+1. Usuário clica em `1/2"` no `Calculator.tsx`
+2. Calculator chama `appendFraction("1/2\"")` do hook `useCalculator`
+3. `useCalculator` atualiza `expression` (ex.: `"5"` → `"5 1/2"`)
+4. Usuário clica `=`
+5. `compute()` chama `engine.calculate("5 1/2")`
+6. `engine.ts` detecta fração → modo inches → retorna `CalculationResult`
+7. `useCalculator` atualiza `displayValue` e `lastResult`
+8. UI renderiza o valor final no display
 
-compute() chama engine.calculate("5 1/2")
+---
 
-engine.ts detecta fração → modo inches → retorna CalculationResult
+## 11) 🗺️ Mapa do repositório (Repo Map)
 
-useCalculator atualiza displayValue e lastResult
+| Pasta/Arquivo | Papel | Não deve conter |
+|---|---|---|
+| `src/lib/calculator/` | motor puro (tokens, eval, formatadores) | estado React, UI, hooks |
+| `src/hooks/` | estado e UX de input | regras matemáticas "novas" |
+| `src/components/` | render e composição | lógica de cálculo e parsing de inches |
+| `src/lib/supabase.ts` | client + guard dev | UI, lógica de paywall |
+| `src/types/` | contratos compartilhados | lógica, side effects |
 
-UI renderiza o valor final no display
+---
 
-11) 🗺️ Mapa do repositório (Repo Map)
-Pasta/Arquivo	Papel	Não deve conter
-src/lib/calculator/	motor puro (tokens, eval, formatadores)	estado React, UI, hooks
-src/hooks/	estado e UX de input	regras matemáticas “novas”
-src/components/	render e composição	lógica de cálculo e parsing de inches
-src/lib/supabase.ts	client + guard dev	UI, lógica de paywall
-src/types/	contratos compartilhados	lógica, side effects
+## 12) ⚠️ Regras de manutenção (Rules for AI)
 
-12) ⚠️ Regras de manutenção (Rules for AI)
-Não mexa em engine.ts para formatação visual de UI.
-Se precisar mudar aparência do resultado, altere formatInches / formatNumber ou crie formatter.ts dentro do core, mantendo matemática pura.
+1. **Não mexa em engine.ts para formatação visual de UI.**
+   Se precisar mudar aparência do resultado, altere `formatInches` / `formatNumber` ou crie `formatter.ts` dentro do core, mantendo matemática pura.
 
-Auth opcional obrigatório: qualquer código que use user/supabase precisa de guardas:
+2. **Auth opcional obrigatório:** qualquer código que use user/supabase precisa de guardas:
+   ```ts
+   if (!supabase) return;
+   ```
+   O app deve funcionar localmente.
 
-if (!supabase) return;
+3. **Single Source of Truth:** o estado da calculadora vive somente em `useCalculator`.
+   Não crie `useState` paralelo de `expression` dentro de `Calculator.tsx`.
 
-o app deve funcionar localmente.
+4. **Consistência de tipos:** sempre use `CalculationResult` para transportar resultados.
+   Não passe strings soltas como "resultado".
 
-Single Source of Truth: o estado da calculadora vive somente em useCalculator.
-Não crie useState paralelo de expression dentro de Calculator.tsx.
+5. **Voz não calcula:** voz gera texto → expressão → `calculate()`.
 
-Consistência de tipos: sempre use CalculationResult para transportar resultados.
-Não passe strings soltas como “resultado”.
+6. **Evitar loops infinitos em hooks:**
+   - `useEffect` com `[]` quando não precisa de dependências
+   - Não fazer async operations dentro de listeners do Supabase
+   - Usar flags (`isChecking`) para evitar chamadas simultâneas
 
-Voz não calcula: voz gera texto → expressão → calculate().
+---
 
-13) 🧱 Roadmap e Changelog
+## 13) 🧱 Roadmap e Changelog
 
 ### Roadmap (curto)
 - [ ] Documentar tabela/políticas do Supabase (se houver RLS)
@@ -395,6 +520,33 @@ Voz não calcula: voz gera texto → expressão → calculate().
 - [ ] Padronizar parsing de voz em módulo único (evitar regex solta na UI)
 
 ### Changelog
+
+**v4.0 (2026-01-16) - Auth & Subscription Simplification**
+- ✅ **Fix: Loop Infinito de Login Resolvido**:
+  - `useAuth.ts`: Listener `onAuthStateChange` simplificado
+  - Agora processa apenas `SIGNED_OUT` (limpa estado) e `SIGNED_IN` (recarrega sessão)
+  - Evita async operations dentro do listener que causavam re-renders
+
+- ✅ **Subscription Simplificado**:
+  - Removida dependência do Auth Hub API externo
+  - Fonte única de verdade: tabela `subscriptions` no Supabase
+  - Cache local de 5 minutos (memória + Capacitor Preferences)
+  - Flag `isChecking` para evitar chamadas simultâneas
+
+- ✅ **Identificação Segura no Checkout**:
+  - `VoiceUpgradePopup.tsx` agora envia `user_id` (UUID Supabase)
+  - Parâmetros: `user_id`, `prefilled_email`, `redirect`
+  - Checkout usa `user_id` para associar compra ao usuário correto
+
+- ✅ **Display de Resultados**:
+  - `engine.ts`: Resultados inteiros agora mostram conversão feet/inches
+  - Exemplo: `12 + 15 = 27` exibe `2' 3"` no display principal
+  - `isInchMode: true` sempre para mostrar ambos os formatos
+
+- ✅ **Arquitetura Documentada**:
+  - Pipeline de voz completo (Record → Whisper → GPT-4o → Calculate)
+  - Estrutura da tabela `subscriptions`
+  - Fluxo de checkout externo documentado
 
 **v3.2 (2026-01-15) - UI Redesign & Branding**
 - ✅ **Tema Claro Completo**: Migrado de tema escuro para tema claro profissional
