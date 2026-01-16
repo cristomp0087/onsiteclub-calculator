@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(adb logcat:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx cap sync android)",
+      "Bash(npx cap:*)",
+      "Bash(adb install:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
