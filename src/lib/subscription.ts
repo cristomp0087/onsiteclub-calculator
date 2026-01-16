@@ -3,9 +3,13 @@
 
 import { supabase } from './supabase';
 import { Preferences } from '@capacitor/preferences';
+import { Capacitor } from '@capacitor/core';
 
 const SUBSCRIPTION_CACHE_KEY = 'calculator_subscription_status';
 const CACHE_DURATION = 1000 * 60 * 5; // 5 minutos
+
+// Cache em memória como fallback
+let memoryCache: CachedSubscription | null = null;
 
 interface CachedSubscription {
   hasAccess: boolean;
@@ -19,6 +23,54 @@ interface SubscriptionData {
   status: 'active' | 'canceled' | 'past_due' | 'inactive' | 'trialing';
   current_period_end?: string;
   cancel_at_period_end?: boolean;
+}
+
+/**
+ * Lê cache (tenta Preferences, fallback para memória)
+ */
+async function getCache(): Promise<CachedSubscription | null> {
+  try {
+    // Tentar memória primeiro (mais rápido)
+    if (memoryCache) {
+      const isExpired = Date.now() - memoryCache.checkedAt > CACHE_DURATION;
+      if (!isExpired) {
+        return memoryCache;
+      }
+    }
+
+    // Se estiver na web ou memória expirou, tentar Preferences
+    if (Capacitor.isNativePlatform()) {
+      const { value } = await Preferences.get({ key: SUBSCRIPTION_CACHE_KEY });
+      if (value) {
+        const cached: CachedSubscription = JSON.parse(value);
+        memoryCache = cached; // Atualiza memória
+        return cached;
+      }
+    }
+  } catch (err) {
+    console.warn('[Subscription] Error reading cache:', err);
+  }
+  return null;
+}
+
+/**
+ * Salva cache (tenta Preferences e memória)
+ */
+async function setCache(data: CachedSubscription): Promise<void> {
+  try {
+    // Sempre salva em memória
+    memoryCache = data;
+
+    // Salva em Preferences se estiver em plataforma nativa
+    if (Capacitor.isNativePlatform()) {
+      await Preferences.set({
+        key: SUBSCRIPTION_CACHE_KEY,
+        value: JSON.stringify(data),
+      });
+    }
+  } catch (err) {
+    console.warn('[Subscription] Error saving cache:', err);
+  }
 }
 
 /**
@@ -83,15 +135,14 @@ export async function hasActiveSubscription(): Promise<boolean> {
 export async function checkPremiumAccess(): Promise<boolean> {
   try {
     // Tentar cache primeiro
-    const { value: cached } = await Preferences.get({ key: SUBSCRIPTION_CACHE_KEY });
+    const cached = await getCache();
 
     if (cached) {
-      const data: CachedSubscription = JSON.parse(cached);
-      const isExpired = Date.now() - data.checkedAt > CACHE_DURATION;
+      const isExpired = Date.now() - cached.checkedAt > CACHE_DURATION;
 
       if (!isExpired) {
-        console.log('[Subscription] Using cached status:', data.hasAccess);
-        return data.hasAccess;
+        console.log('[Subscription] Using cached status:', cached.hasAccess);
+        return cached.hasAccess;
       } else {
         console.log('[Subscription] Cache expired, checking server');
       }
@@ -101,19 +152,16 @@ export async function checkPremiumAccess(): Promise<boolean> {
     const hasAccess = await hasActiveSubscription();
 
     // Salvar no cache
-    await Preferences.set({
-      key: SUBSCRIPTION_CACHE_KEY,
-      value: JSON.stringify({
-        hasAccess,
-        checkedAt: Date.now(),
-      } as CachedSubscription),
+    await setCache({
+      hasAccess,
+      checkedAt: Date.now(),
     });
 
     return hasAccess;
   } catch (err) {
     console.error('[Subscription] Error checking premium access:', err);
-    // Em caso de erro, verificar diretamente sem cache
-    return hasActiveSubscription();
+    // Em caso de erro, retorna false (sem acesso)
+    return false;
   }
 }
 
@@ -123,7 +171,14 @@ export async function checkPremiumAccess(): Promise<boolean> {
  */
 export async function clearSubscriptionCache(): Promise<void> {
   try {
-    await Preferences.remove({ key: SUBSCRIPTION_CACHE_KEY });
+    // Limpa memória
+    memoryCache = null;
+
+    // Limpa Preferences se estiver em plataforma nativa
+    if (Capacitor.isNativePlatform()) {
+      await Preferences.remove({ key: SUBSCRIPTION_CACHE_KEY });
+    }
+
     console.log('[Subscription] Cache cleared');
   } catch (err) {
     console.error('[Subscription] Error clearing cache:', err);
