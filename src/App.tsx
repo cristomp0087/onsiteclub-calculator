@@ -1,13 +1,21 @@
 // src/App.tsx
 // App principal com sistema de autenticação completo
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { Browser } from '@capacitor/browser';
+import { Capacitor } from '@capacitor/core';
 import Calculator from './components/Calculator';
 import AuthScreen from './components/AuthScreen';
-import VoiceUpgradePopup from './components/VoiceUpgradePopup';
 import { useAuth, useDeepLink } from './hooks';
+import { supabase } from './lib/supabase';
 import type { VoiceState } from './types/calculator';
 import './styles/App.css';
+
+// URL do checkout
+const CHECKOUT_URL = 'https://auth.onsiteclub.ca/checkout/calculator';
+const API_BASE_URL = Capacitor.isNativePlatform()
+  ? 'https://calculator.onsiteclub.ca'
+  : '';
 
 export default function App() {
   const {
@@ -22,7 +30,62 @@ export default function App() {
   } = useAuth();
 
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
-  const [showVoicePopup, setShowVoicePopup] = useState(false);
+
+  // Redireciona direto para o checkout (sem popup)
+  const handleUpgradeClick = useCallback(async () => {
+    if (!supabase || !user) return;
+
+    try {
+      // 1. Pega o access token da sessão atual
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        console.error('[App] No session token');
+        return;
+      }
+
+      // 2. Gera JWT token seguro via API
+      const tokenResponse = await fetch(`${API_BASE_URL}/api/checkout-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ app: 'calculator' }),
+      });
+
+      if (!tokenResponse.ok) {
+        console.error('[App] Failed to get checkout token');
+        // Fallback: abre checkout sem token
+        const fallbackUrl = `${CHECKOUT_URL}?prefilled_email=${encodeURIComponent(user.email || '')}`;
+        if (Capacitor.isNativePlatform()) {
+          await Browser.open({ url: fallbackUrl, presentationStyle: 'popover' });
+        } else {
+          window.open(fallbackUrl, '_blank');
+        }
+        return;
+      }
+
+      const { token } = await tokenResponse.json();
+
+      // 3. Monta URL com token JWT
+      const redirectUri = 'onsitecalculator://auth-callback';
+      const url = new URL(CHECKOUT_URL);
+      url.searchParams.set('token', token);
+      if (user.email) {
+        url.searchParams.set('prefilled_email', user.email);
+      }
+      url.searchParams.set('redirect', redirectUri);
+
+      // 4. Abre o checkout
+      if (Capacitor.isNativePlatform()) {
+        await Browser.open({ url: url.toString(), presentationStyle: 'popover' });
+      } else {
+        window.open(url.toString(), '_blank');
+      }
+    } catch (err) {
+      console.error('[App] Error opening checkout:', err);
+    }
+  }, [user]);
 
   // Configura Deep Linking para receber callback do checkout
   useDeepLink({
@@ -36,7 +99,6 @@ export default function App() {
       // Aguarda um pouco para o banco processar
       setTimeout(async () => {
         await refreshProfile();
-        setShowVoicePopup(false);
       }, 1500);
     },
   });
@@ -64,23 +126,13 @@ export default function App() {
 
   // Usuário autenticado: mostra calculadora
   return (
-    <>
-      {showVoicePopup && (
-        <VoiceUpgradePopup
-          onClose={() => setShowVoicePopup(false)}
-          userEmail={profile?.email || user?.email}
-          userId={user?.id}
-        />
-      )}
-
-      <Calculator
-        voiceState={voiceState}
-        setVoiceState={setVoiceState}
-        hasVoiceAccess={hasVoiceAccess}
-        onVoiceUpgradeClick={() => setShowVoicePopup(true)}
-        onSignOut={signOut}
-        userName={profile?.nome || profile?.email || user?.email}
-      />
-    </>
+    <Calculator
+      voiceState={voiceState}
+      setVoiceState={setVoiceState}
+      hasVoiceAccess={hasVoiceAccess}
+      onVoiceUpgradeClick={handleUpgradeClick}
+      onSignOut={signOut}
+      userName={profile?.nome || profile?.email || user?.email}
+    />
   );
 }

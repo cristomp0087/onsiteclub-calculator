@@ -94,12 +94,23 @@ export async function hasActiveSubscription(): Promise<boolean> {
       return false;
     }
 
-    // Usa .maybeSingle() ao invés de .single() para não dar erro quando não encontra
+    console.log('[Subscription] Checking for user:', user.id);
+
+    // Primeiro, busca TODAS as subscriptions do usuário (para debug)
+    const { data: allSubs, error: allError } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('user_id', user.id);
+
+    console.log('[Subscription] All subscriptions for user:', allSubs, 'Error:', allError);
+
+    // Busca subscription específica do calculator
+    // Tenta tanto 'calculator' quanto 'calculator-pro' para compatibilidade
     const { data, error } = await supabase
       .from('subscriptions')
       .select('*')
       .eq('user_id', user.id)
-      .eq('app', 'calculator')
+      .in('app', ['calculator', 'calculator-pro', 'onsite-calculator'])
       .maybeSingle();
 
     // PGRST116 = "No rows found" - isso é esperado para usuários sem assinatura
@@ -109,11 +120,13 @@ export async function hasActiveSubscription(): Promise<boolean> {
     }
 
     if (!data) {
-      console.log('[Subscription] No subscription found for user');
+      console.log('[Subscription] No subscription found for user with app calculator/calculator-pro');
       return false;
     }
 
     const subscription = data as SubscriptionData;
+
+    console.log('[Subscription] Found subscription:', subscription);
 
     // Verifica se está ativo ou em trial
     const isActive = subscription.status === 'active' || subscription.status === 'trialing';
@@ -124,7 +137,7 @@ export async function hasActiveSubscription(): Promise<boolean> {
 
     const hasAccess = isActive && notExpired;
 
-    console.log('[Subscription] Status:', subscription.status, 'Has access:', hasAccess);
+    console.log('[Subscription] Status:', subscription.status, 'isActive:', isActive, 'notExpired:', notExpired, 'Has access:', hasAccess);
 
     return hasAccess;
   } catch (err) {
