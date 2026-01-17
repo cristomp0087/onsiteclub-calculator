@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, type UserProfile } from '../lib/supabase';
-import { checkPremiumAccess, refreshSubscriptionStatus } from '../lib/subscription';
+import { checkPremiumAccess, refreshSubscriptionStatus, clearSubscriptionCache } from '../lib/subscription';
 import { logger } from '../lib/logger';
 import type { User, Session } from '@supabase/supabase-js';
 
@@ -129,6 +129,8 @@ export function useAuth(): UseAuthReturn {
       (event) => {
         // Só processa SIGNED_OUT para limpar estado
         if (event === 'SIGNED_OUT') {
+          // Limpa cache de subscription para evitar vazamento entre usuários
+          clearSubscriptionCache();
           setAuthState({
             user: null,
             profile: null,

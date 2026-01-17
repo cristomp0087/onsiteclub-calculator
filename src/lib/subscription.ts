@@ -16,6 +16,7 @@ let memoryCache: CachedSubscription | null = null;
 let isChecking = false;
 
 interface CachedSubscription {
+  userId: string;
   hasAccess: boolean;
   checkedAt: number;
 }
@@ -135,18 +136,32 @@ export async function hasActiveSubscription(): Promise<boolean> {
  * Usa apenas Supabase como fonte de verdade (tabela subscriptions)
  */
 export async function checkPremiumAccess(): Promise<boolean> {
-  // Evita chamadas simultâneas
+  if (!supabase) {
+    return false;
+  }
+
+  // Pega usuário atual PRIMEIRO - necessário para validar cache
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return false;
+  }
+
+  // Evita chamadas simultâneas para o MESMO usuário
   if (isChecking) {
-    return memoryCache?.hasAccess ?? false;
+    // Só retorna cache se for do mesmo usuário
+    if (memoryCache?.userId === user.id) {
+      return memoryCache.hasAccess;
+    }
+    return false;
   }
 
   try {
     isChecking = true;
 
-    // Tentar cache primeiro
+    // Tentar cache primeiro - MAS só se for do mesmo usuário
     const cached = await getCache();
 
-    if (cached) {
+    if (cached && cached.userId === user.id) {
       const isExpired = Date.now() - cached.checkedAt > CACHE_DURATION;
 
       if (!isExpired) {
@@ -155,11 +170,12 @@ export async function checkPremiumAccess(): Promise<boolean> {
       }
     }
 
-    // Verifica direto no Supabase (tabela subscriptions)
+    // Cache inválido ou expirado - verifica no Supabase
     const hasAccess = await hasActiveSubscription();
 
-    // Salvar no cache
+    // Salvar no cache COM userId
     await setCache({
+      userId: user.id,
       hasAccess,
       checkedAt: Date.now(),
     });
