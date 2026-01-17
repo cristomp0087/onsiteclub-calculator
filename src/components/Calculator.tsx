@@ -1,10 +1,11 @@
 // src/components/Calculator.tsx
 // Componente principal da calculadora
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { useCalculator, useOnlineStatus, useVoiceRecorder } from '../hooks';
+import { useCalculator, useOnlineStatus, useVoiceRecorder, useCalculatorHistory } from '../hooks';
 import { logger } from '../lib/logger';
+import { HistoryModal } from './HistoryModal';
 import type { VoiceState, VoiceResponse } from '../types/calculator';
 
 // Teclado de frações
@@ -57,6 +58,8 @@ export default function Calculator({
   userName,
 }: CalculatorProps) {
   const isOnline = useOnlineStatus();
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const { history, addToHistory } = useCalculatorHistory();
   const {
     expression,
     setExpression,
@@ -113,6 +116,10 @@ export default function Calculator({
           expression: data.expression,
           result: result?.resultDecimal,
         });
+        // Salva no histórico se houver resultado
+        if (result) {
+          addToHistory(result);
+        }
       } else if (data.error) {
         logger.voice.apiCall(duration, false, {
           status: response.status,
@@ -125,7 +132,7 @@ export default function Calculator({
     } finally {
       setVoiceState('idle');
     }
-  }, [setExpressionAndCompute, setVoiceState]);
+  }, [setExpressionAndCompute, setVoiceState, addToHistory]);
 
   const { startRecording, stopRecording } = useVoiceRecorder({
     onRecordingComplete: handleAudioUpload,
@@ -173,9 +180,13 @@ export default function Calculator({
   // Keypad handler
   const handleKeyClick = (key: string) => {
     switch (key) {
-      case '=':
-        compute();
+      case '=': {
+        const result = compute();
+        if (result) {
+          addToHistory(result);
+        }
         break;
+      }
       case 'C':
         clear();
         break;
@@ -216,11 +227,6 @@ export default function Calculator({
     if (voiceState === 'recording') return 'Listening...';
     if (voiceState === 'processing') return 'Processing...';
     return 'Hold to Speak';
-  };
-
-  // Feedback visual acima do botão (removido para não mover o botão)
-  const getVoiceFeedback = () => {
-    return ''; // Desativado para manter o botão fixo
   };
 
   // Classes CSS do botão
@@ -286,24 +292,32 @@ export default function Calculator({
           </div>
           
           <div className="divider" />
-          
-          <input
-            type="text"
-            className="expression-input"
-            value={expression}
-            onChange={(e) => setExpression(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') compute();
-            }}
-            placeholder="Type or speak: 5 1/2 + 3 1/4 - 2"
-          />
-          
-          {/* Feedback visual acima do botão */}
-          {getVoiceFeedback() && (
-            <div className={`voice-feedback ${voiceState}`}>
-              {getVoiceFeedback()}
-            </div>
-          )}
+
+          {/* Expression input com botão M */}
+          <div className="expression-wrapper">
+            <input
+              type="text"
+              className="expression-input"
+              value={expression}
+              onChange={(e) => setExpression(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const result = compute();
+                  if (result) {
+                    addToHistory(result);
+                  }
+                }
+              }}
+              placeholder="Type or speak: 5 1/2 + 3 1/4 - 2"
+            />
+            <button
+              className="history-btn"
+              onClick={() => setShowHistoryModal(true)}
+              title="Histórico"
+            >
+              M
+            </button>
+          </div>
 
           <button
             className={getVoiceButtonClass()}
@@ -338,14 +352,6 @@ export default function Calculator({
             </span>
             <span className="voice-text">{getVoiceButtonText()}</span>
           </button>
-
-          {/* Memory Display */}
-          {lastResult && lastResult.expression && (
-            <div className="memory">
-              <div className="memory-expr">{lastResult.expression}</div>
-              <div className="memory-line">────────</div>
-            </div>
-          )}
         </div>
 
         {/* Right Card: Keypad & Fractions */}
@@ -381,6 +387,13 @@ export default function Calculator({
           </div>
         </div>
       </main>
+
+      {/* Modal de Histórico */}
+      <HistoryModal
+        history={history}
+        isOpen={showHistoryModal}
+        onClose={() => setShowHistoryModal(false)}
+      />
     </div>
   );
 }

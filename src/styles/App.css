@@ -205,17 +205,23 @@
   margin: 8px 0;
 }
 
-/* Expression Input - CORREÇÃO: Compacto */
+/* Expression Wrapper - Input com botão M */
+.expression-wrapper {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+/* Expression Input - Tamanho aumentado */
 .expression-input {
   width: 100%;
   background: #FFFFFF;
   border: 2px solid #D9E1EA;
   color: #0E1A2A;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 0.95rem;
+  border-radius: 12px;
+  padding: 16px 50px 16px 16px; /* Espaço para o botão M à direita */
+  font-size: 1.1rem;
   font-family: inherit;
-  margin-bottom: 8px;
+  min-height: 60px;
 }
 
 .expression-input:focus {
@@ -226,6 +232,36 @@
 
 .expression-input::placeholder {
   color: #9AA7B5;
+}
+
+/* Botão M (Histórico) */
+.history-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  border: none;
+  color: #0b1120;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.history-btn:hover {
+  transform: translateY(-50%) scale(1.05);
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.4);
+}
+
+.history-btn:active {
+  transform: translateY(-50%) scale(0.95);
 }
 
 /* Voice Button - Estados visuais melhorados */

@@ -26,3 +26,13 @@ export interface VoiceResponse {
   expression: string;
   error?: string;
 }
+
+export interface HistoryEntry {
+  id: string;
+  expression: string;
+  resultFeetInches: string;
+  resultTotalInches: string;
+  resultDecimal: number;
+  isInchMode: boolean;
+  timestamp: number;
+}
