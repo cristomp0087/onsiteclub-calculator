@@ -184,7 +184,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 1. Whisper transcription
     const formData = new FormData();
-    const audioBlob = new Blob([audioData], { type: 'audio/webm' });
+    // Convert Buffer to Uint8Array for Blob compatibility
+    const audioBlob = new Blob([new Uint8Array(audioData)], { type: 'audio/webm' });
     formData.append('file', audioBlob, filename);
     formData.append('model', 'whisper-1');
     formData.append('language', 'pt'); // Prioritize Portuguese but Whisper auto-detects
