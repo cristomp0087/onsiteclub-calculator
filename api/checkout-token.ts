@@ -4,12 +4,24 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { log, error, getClientIP } from './_lib/logger';
+
+// Helper para extrair IP do request
+function getClientIP(headers: Record<string, string | string[] | undefined>): string {
+  const forwarded = headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0].split(',')[0].trim();
+  }
+  return 'unknown';
+}
 
 // CORS - Domínios permitidos
 const ALLOWED_ORIGINS = [
   'https://calculator.onsiteclub.ca',
   'https://app.onsiteclub.ca',
+  'https://onsiteclub-calculator.vercel.app',
   'capacitor://localhost',
   'https://localhost',
   'http://localhost:5173',
@@ -96,12 +108,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const jwtSecret = process.env.CHECKOUT_JWT_SECRET;
 
   if (!supabaseUrl || !supabaseServiceKey) {
-    error('Checkout', 'config_error', 'Missing Supabase config');
+    console.error('[Checkout] Missing Supabase config');
     return res.status(500).json({ error: 'Server configuration error' });
   }
 
   if (!jwtSecret) {
-    error('Checkout', 'config_error', 'Missing CHECKOUT_JWT_SECRET');
+    console.error('[Checkout] Missing CHECKOUT_JWT_SECRET');
     return res.status(500).json({ error: 'Server configuration error' });
   }
 
@@ -109,7 +121,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Extrai o token de auth do header
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      error('Checkout', 'auth_error', 'Missing authorization header', { ip });
+      console.error('[Checkout] Missing authorization header');
       return res.status(401).json({ error: 'Missing authorization header' });
     }
 
@@ -122,7 +134,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
 
     if (authError || !user) {
-      error('Checkout', 'auth_error', 'Invalid or expired session', { error: authError?.message });
+      console.error('[Checkout] Auth error:', authError?.message);
       return res.status(401).json({ error: 'Invalid or expired session' });
     }
 
@@ -132,34 +144,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Cria payload do JWT
     const now = Math.floor(Date.now() / 1000);
     const payload = {
-      sub: user.id,                    // user_id do Supabase
-      email: user.email,               // email do usuário
-      app: app,                        // app de origem ('calculator')
-      iat: now,                        // issued at
-      exp: now + (5 * 60),             // expira em 5 minutos
-      jti: crypto.randomUUID(),        // unique token id (previne replay)
+      sub: user.id,
+      email: user.email,
+      app: app,
+      iat: now,
+      exp: now + (5 * 60),
+      jti: crypto.randomUUID(),
     };
 
     // Gera o JWT
     const token = await createJWT(payload, jwtSecret);
 
-    log({
-      module: 'Checkout',
-      action: 'token_generated',
-      success: true,
-      duration_ms: Date.now() - startTime,
-      user_id: user.id,
-      ip,
-      context: { app },
-    });
+    console.log('[Checkout] Token generated:', { user_id: user.id.substring(0, 8), app, duration_ms: Date.now() - startTime });
 
     return res.status(200).json({
       token,
-      expiresIn: 300, // 5 minutos em segundos
+      expiresIn: 300,
     });
 
   } catch (err) {
-    error('Checkout', 'exception', String(err), { duration_ms: Date.now() - startTime });
+    console.error('[Checkout] Exception:', String(err));
     return res.status(500).json({ error: 'Failed to generate token' });
   }
 }

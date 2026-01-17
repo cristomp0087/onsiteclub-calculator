@@ -3,30 +3,40 @@
 // Vercel Serverless Function
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { log, error, getClientIP } from './_lib/logger';
+
+// Helper para extrair IP do request
+function getClientIP(headers: Record<string, string | string[] | undefined>): string {
+  const forwarded = headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0].split(',')[0].trim();
+  }
+  return 'unknown';
+}
 
 // CORS - Domínios permitidos
 const ALLOWED_ORIGINS = [
   'https://calculator.onsiteclub.ca',
   'https://app.onsiteclub.ca',
+  'https://onsiteclub-calculator.vercel.app',
   'capacitor://localhost',
-  'https://localhost',  // Capacitor with androidScheme: 'https'
+  'https://localhost',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
 
-// Check if origin should be allowed (includes Capacitor native apps)
 function isAllowedOrigin(origin: string): boolean {
   if (!origin) return false;
   if (ALLOWED_ORIGINS.includes(origin)) return true;
-  // Allow Capacitor apps (they may send no origin or file://)
   if (origin.startsWith('capacitor://') || origin.startsWith('ionic://')) return true;
   return false;
 }
 
-// Rate limiting simples (em produção usar Redis/Upstash)
+// Rate limiting simples
 const rateLimitMap = new Map<string, number[]>();
-const RATE_LIMIT_WINDOW_MS = 60000; // 1 minuto
+const RATE_LIMIT_WINDOW_MS = 60000;
 const RATE_LIMIT_MAX_REQUESTS = 30;
 
 function checkRateLimit(ip: string): boolean {
@@ -41,7 +51,6 @@ function checkRateLimit(ip: string): boolean {
   recent.push(now);
   rateLimitMap.set(ip, recent);
 
-  // Limpa entries antigas periodicamente
   if (rateLimitMap.size > 10000) {
     for (const [key, times] of rateLimitMap.entries()) {
       if (times.every(t => now - t > RATE_LIMIT_WINDOW_MS)) {
@@ -101,8 +110,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (!origin) {
-    // Native apps may not send origin header - allow all for now
-    // In production, you might want to use authentication instead
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -118,20 +125,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Rate limiting
   if (!checkRateLimit(ip)) {
-    error('API', 'rate_limited', 'Too many requests', { ip });
+    console.error('[API] Rate limited:', ip);
     return res.status(429).json({ error: 'Too many requests. Please wait a moment.' });
   }
 
   // Check API key
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    error('API', 'config_error', 'Missing OPENAI_API_KEY');
+    console.error('[API] Missing OPENAI_API_KEY');
     return res.status(500).json({ error: 'Server configuration error' });
   }
 
   try {
     // Parse multipart form data
-    // Vercel Edge functions handle this differently, for Node runtime:
     const chunks: Buffer[] = [];
 
     await new Promise<void>((resolve, reject) => {
@@ -161,7 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const headerEnd = part.indexOf('\r\n\r\n');
         if (headerEnd !== -1) {
           const content = part.slice(headerEnd + 4);
-          // Remove trailing boundary markers
           const cleanContent = content.replace(/\r\n--$/, '').replace(/--\r\n$/, '');
           audioData = Buffer.from(cleanContent, 'binary');
         }
@@ -174,11 +179,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 1. Whisper transcription
     const formData = new FormData();
-    // Convert Buffer to Uint8Array for Blob compatibility
     const audioBlob = new Blob([new Uint8Array(audioData)], { type: 'audio/webm' });
     formData.append('file', audioBlob, filename);
     formData.append('model', 'whisper-1');
-    formData.append('language', 'pt'); // Prioritize Portuguese but Whisper auto-detects
+    formData.append('language', 'pt');
     formData.append('prompt', 'Medidas de construção: polegadas, pés, frações como 1/2, 3/8, 1/4, 5/8, 7/8. Palavras: meio, quarto, oitavo, pé, polegada, mais, menos, vezes, dividido. Construction measurements: inches, feet, fractions.');
 
     const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -191,7 +195,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!whisperResponse.ok) {
       const errText = await whisperResponse.text();
-      error('Voice', 'whisper_error', 'Transcription failed', { error: errText, duration_ms: Date.now() - startTime });
+      console.error('[Voice] Whisper error:', errText);
       return res.status(500).json({ error: 'Transcription failed' });
     }
 
@@ -219,7 +223,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!gptResponse.ok) {
       const errText = await gptResponse.text();
-      error('Voice', 'gpt_error', 'Interpretation failed', { error: errText, transcription: transcribedText });
+      console.error('[Voice] GPT error:', errText, 'transcription:', transcribedText);
       return res.status(500).json({ error: 'Interpretation failed' });
     }
 
@@ -227,20 +231,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const content = gptResult.choices[0]?.message?.content || '{}';
     const parsed = JSON.parse(content);
 
-    // Log success
-    log({
-      module: 'Voice',
-      action: 'interpret',
-      success: true,
-      duration_ms: Date.now() - startTime,
-      ip,
-      context: { transcription: transcribedText, expression: parsed.expression },
-    });
+    console.log('[Voice] Success:', { transcription: transcribedText, expression: parsed.expression, duration_ms: Date.now() - startTime });
 
     return res.status(200).json(parsed);
 
   } catch (err) {
-    error('API', 'exception', String(err), { duration_ms: Date.now() - startTime });
+    console.error('[API] Exception:', String(err));
     return res.status(500).json({ error: 'Server processing error' });
   }
 }
