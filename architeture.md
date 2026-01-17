@@ -40,10 +40,11 @@
 ### Telas / Componentes macro
 | Tela / Módulo | Arquivo | Responsabilidade |
 |---|---|---|
-| **Calculator (principal)** | `src/components/Calculator.tsx` | Container: header + display + teclado + card de voz |
+| **Calculator (principal)** | `src/components/Calculator.tsx` | Container: header + display + teclado + card de voz + logout |
 | **Auth (login/signup)** | `src/components/AuthScreen.tsx` | Auth e criação de perfil |
-| **Paywall voz** | `src/components/VoiceUpgradePopup.tsx` | Bloqueio premium + redirect Stripe |
-| **App Shell** | `App.tsx` (ou equivalente) | Decide fluxo: modo dev vs auth vs calculadora |
+| **App Shell** | `App.tsx` | Decide fluxo: auth vs calculadora + lógica de checkout |
+
+> **Nota v4.1**: `VoiceUpgradePopup.tsx` foi removido. O upgrade agora redireciona direto para checkout.
 
 ### 2.1 Header (Cabeçalho)
 **Responsabilidade**: Branding e status do usuário
@@ -422,26 +423,40 @@ interface SubscriptionData {
 
 **Onde aplicar**:
 - `Calculator.tsx` recebe `hasVoiceAccess` e `voiceState`
-- Se não tiver acesso → botão de mic abre `VoiceUpgradePopup.tsx`
+- Se não tiver acesso → botão de mic redireciona DIRETO para checkout (sem popup)
 
-### 8.5 Checkout Externo
+### 8.5 Checkout Externo (v4.1 - Simplificado)
 
-**VoiceUpgradePopup.tsx**:
-- URL: `https://auth.onsiteclub.ca/checkout/calculator`
-- Parâmetros enviados:
-  - `user_id`: UUID do Supabase (identificador único e seguro)
-  - `prefilled_email`: Email para pré-preencher formulário
-  - `redirect`: `onsitecalculator://auth-callback`
+**Fluxo direto** (sem popup intermediário):
+1. Usuário clica no botão de voz (sem acesso)
+2. `App.tsx` chama `handleUpgradeClick()`
+3. Gera JWT token via `/api/checkout-token`
+4. Redireciona direto para `https://auth.onsiteclub.ca/checkout/calculator`
+5. Usuário completa pagamento
+6. Checkout grava na tabela `subscriptions`
+7. Redirect via deep link → App verifica e libera Voice
 
-**Fluxo**:
-1. Usuário clica "Start Free Trial"
-2. Abre browser externo com URL do checkout
-3. Usuário completa pagamento no `auth.onsiteclub.ca`
-4. Checkout grava na tabela `subscriptions` usando `user_id`
-5. Redirect via deep link para o app
-6. App verifica `subscriptions` e libera Voice
+**Parâmetros enviados**:
+- `token`: JWT assinado com `user_id` (gerado por `/api/checkout-token`)
+- `prefilled_email`: Email do usuário
+- `redirect`: `onsitecalculator://auth-callback`
 
-**⚠️ Importante**: O `user_id` é o identificador seguro. O checkout DEVE usar esse ID para associar a compra ao usuário correto.
+**API `/api/checkout-token`** (Vercel Serverless):
+- Valida sessão Supabase via `access_token`
+- Gera JWT com payload: `{ sub: user_id, email, app, exp }`
+- Assinado com `CHECKOUT_JWT_SECRET`
+- Expira em 5 minutos
+
+**⚠️ Importante**:
+- Não existe mais popup de upgrade (`VoiceUpgradePopup.tsx` removido)
+- O `user_id` é enviado de forma segura via JWT (não exposto na URL)
+
+### 8.6 Botão de Logout
+
+**Localização**: Header do `Calculator.tsx`
+- Ícone de porta com seta (SVG)
+- Ao clicar: chama `signOut()` do `useAuth`
+- Limpa sessão e mostra tela de login (`AuthScreen`)
 
 ## 9) 📦 Tipagem global (`src/types/calculator.ts`)
 
@@ -521,6 +536,26 @@ export type VoiceState = 'idle' | 'recording' | 'processing';
 
 ### Changelog
 
+**v4.1 (2026-01-16) - Checkout Simplificado & Logout**
+- ✅ **Removido VoiceUpgradePopup**:
+  - Popup de upgrade eliminado
+  - Clique no botão de voz redireciona DIRETO para checkout
+  - Fluxo mais simples e direto para o usuário
+
+- ✅ **JWT para Checkout Seguro**:
+  - Nova API `/api/checkout-token` gera JWT assinado
+  - Token contém `user_id` criptografado (não exposto na URL)
+  - Expira em 5 minutos para segurança
+
+- ✅ **Botão de Logout Adicionado**:
+  - Ícone de porta com seta no header
+  - Permite trocar de conta sem reinstalar o app
+  - Ao sair, mostra tela de login bloqueando uso
+
+- ✅ **Debug de Subscription Melhorado**:
+  - Logs detalhados para diagnosticar problemas
+  - Suporte a múltiplos valores de `app` (calculator, calculator-pro, onsite-calculator)
+
 **v4.0 (2026-01-16) - Auth & Subscription Simplification**
 - ✅ **Fix: Loop Infinito de Login Resolvido**:
   - `useAuth.ts`: Listener `onAuthStateChange` simplificado
@@ -534,9 +569,9 @@ export type VoiceState = 'idle' | 'recording' | 'processing';
   - Flag `isChecking` para evitar chamadas simultâneas
 
 - ✅ **Identificação Segura no Checkout**:
-  - `VoiceUpgradePopup.tsx` agora envia `user_id` (UUID Supabase)
-  - Parâmetros: `user_id`, `prefilled_email`, `redirect`
-  - Checkout usa `user_id` para associar compra ao usuário correto
+  - JWT token para identificação segura do usuário
+  - Parâmetros: `token`, `prefilled_email`, `redirect`
+  - Checkout usa `user_id` do JWT para associar compra
 
 - ✅ **Display de Resultados**:
   - `engine.ts`: Resultados inteiros agora mostram conversão feet/inches
