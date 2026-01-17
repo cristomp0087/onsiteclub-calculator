@@ -3,6 +3,7 @@
 // Baseado no código original OnSite Calculator v3.2
 
 import type { CalculationResult } from '../../types/calculator';
+import { logger } from '../logger';
 
 // ============================================
 // CONVERSORES
@@ -49,24 +50,26 @@ export function parseToInches(str: string): number {
 /**
  * Formata polegadas decimais para formato de construção
  * Exemplo: 11.5 → "11 1/2""
+ * Para números inteiros (sem fração), não mostra símbolo de polegadas
+ * Exemplo: 20 → "20" (não "20"")
  */
 export function formatInches(inches: number): string {
   if (!isFinite(inches)) return 'Error';
-  
+
   const negative = inches < 0;
   inches = Math.abs(inches);
-  
+
   const feet = Math.floor(inches / 12);
   let remaining = inches % 12;
-  
+
   const whole = Math.floor(remaining);
   const frac = remaining - whole;
-  
+
   // Arredonda para o 1/16 mais próximo
   const sixteenths = Math.round(frac * 16);
   let fracStr = '';
   let adjustedWhole = whole;
-  
+
   if (sixteenths > 0 && sixteenths < 16) {
     const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
     const d = gcd(sixteenths, 16);
@@ -75,40 +78,61 @@ export function formatInches(inches: number): string {
     // Arredondou pra cima
     adjustedWhole = whole + 1;
   }
-  
+
+  // Determina se tem fração ou feet (precisa de símbolos)
+  const hasFraction = fracStr !== '';
+  const hasFeet = feet > 0;
+
   let result = '';
-  if (feet > 0) result += `${feet}' `;
+  if (hasFeet) result += `${feet}' `;
   if (adjustedWhole > 0 || (feet === 0 && !fracStr)) result += adjustedWhole;
   result += fracStr;
-  result += '"';
-  
+
+  // Só adiciona " se tem fração ou feet (indica medida de construção)
+  if (hasFraction || hasFeet) {
+    result += '"';
+  }
+
   return (negative ? '-' : '') + result.trim();
 }
 
 /**
  * Formata polegadas totais COM FRAÇÃO (não decimal)
  * Exemplo: 24.875 → "24 7/8 In"
+ * Para números inteiros (sem fração), não mostra " In"
+ * Exemplo: 20 → "20" (não "20 In")
  */
 export function formatTotalInches(inches: number): string {
   if (!isFinite(inches)) return 'Error';
-  
+
   const negative = inches < 0;
   inches = Math.abs(inches);
-  
+
   const whole = Math.floor(inches);
   const frac = inches - whole;
-  
+
   // Arredonda para o 1/16 mais próximo
   const sixteenths = Math.round(frac * 16);
   let fracStr = '';
-  
+  let adjustedWhole = whole;
+
   if (sixteenths > 0 && sixteenths < 16) {
     const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
     const d = gcd(sixteenths, 16);
     fracStr = ` ${sixteenths / d}/${16 / d}`;
+  } else if (sixteenths === 16) {
+    // Arredondou pra cima
+    adjustedWhole = whole + 1;
   }
-  
-  return (negative ? '-' : '') + whole + fracStr + ' In';
+
+  const hasFraction = fracStr !== '';
+
+  // Só adiciona " In" se tem fração (indica medida de construção)
+  if (hasFraction) {
+    return (negative ? '-' : '') + adjustedWhole + fracStr + ' In';
+  }
+
+  return (negative ? '-' : '') + adjustedWhole.toString();
 }
 
 /**
@@ -422,9 +446,9 @@ export function calculate(expression: string): CalculationResult | null {
     };
     
   } catch (error) {
-    console.error('[Calculator] Error:', error);
-    return { 
-      resultFeetInches: 'Error', 
+    logger.calculator.error(String(error), expr);
+    return {
+      resultFeetInches: 'Error',
       resultTotalInches: 'Error',
       resultDecimal: 0,
       expression: expr,

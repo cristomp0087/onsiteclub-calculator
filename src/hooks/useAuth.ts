@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, type UserProfile } from '../lib/supabase';
 import { checkPremiumAccess, refreshSubscriptionStatus } from '../lib/subscription';
+import { logger } from '../lib/logger';
 import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthState {
@@ -48,13 +49,13 @@ export function useAuth(): UseAuthReturn {
         .single();
 
       if (error) {
-        console.error('[Auth] Error fetching profile:', error);
+        logger.auth.error('Error fetching profile', { error: error.message, userId });
         return null;
       }
 
       return data as UserProfile;
     } catch (err) {
-      console.error('[Auth] Exception fetching profile:', err);
+      logger.auth.error('Exception fetching profile', { error: String(err), userId });
       return null;
     }
   }, []);
@@ -64,20 +65,16 @@ export function useAuth(): UseAuthReturn {
   const checkVoiceAccessAsync = useCallback(async (): Promise<boolean> => {
     try {
       const hasAccess = await checkPremiumAccess();
-      console.log('[Auth] Voice access check result:', hasAccess);
       return hasAccess;
     } catch (err) {
-      console.error('[Auth] Error checking voice access:', err);
+      logger.auth.error('Error checking voice access', { error: String(err) });
       return false;
     }
   }, []);
 
   // Carrega a sessão atual ao montar o componente
   useEffect(() => {
-    console.log('[Auth] useEffect triggered, supabase:', !!supabase);
-
     if (!supabase) {
-      console.log('[Auth] Supabase not available - offline mode');
       setAuthState(prev => ({ ...prev, loading: false }));
       return;
     }
@@ -87,19 +84,18 @@ export function useAuth(): UseAuthReturn {
     // Busca sessão inicial
     const loadSession = async () => {
       try {
-        console.log('[Auth] Loading session...');
         const { data: { session } } = await supabase!.auth.getSession();
-        console.log('[Auth] Session loaded:', !!session);
 
         if (!mounted) return;
 
         if (session?.user) {
-          console.log('[Auth] User found:', session.user.email);
           const profile = await fetchProfile(session.user.id);
 
           if (!mounted) return;
 
           const hasVoiceAccess = await checkVoiceAccessAsync();
+
+          logger.auth.sessionLoad(true);
 
           setAuthState({
             user: session.user,
@@ -109,7 +105,7 @@ export function useAuth(): UseAuthReturn {
             hasVoiceAccess,
           });
         } else {
-          console.log('[Auth] No session found - showing login');
+          logger.auth.sessionLoad(false);
           setAuthState({
             user: null,
             profile: null,
@@ -119,7 +115,7 @@ export function useAuth(): UseAuthReturn {
           });
         }
       } catch (error) {
-        console.error('[Auth] Error loading session:', error);
+        logger.auth.error('Error loading session', { error: String(error) });
         if (mounted) {
           setAuthState(prev => ({ ...prev, loading: false }));
         }
@@ -131,8 +127,6 @@ export function useAuth(): UseAuthReturn {
     // Listener para mudanças na autenticação - apenas SIGNED_OUT e SIGNED_IN
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event) => {
-        console.log('[Auth] Auth state changed:', event);
-
         // Só processa SIGNED_OUT para limpar estado
         if (event === 'SIGNED_OUT') {
           setAuthState({
@@ -171,12 +165,14 @@ export function useAuth(): UseAuthReturn {
       });
 
       if (error) {
+        logger.auth.signIn(false, { errorCode: error.message });
         return { error: formatAuthError(error.message) };
       }
 
+      logger.auth.signIn(true);
       return { error: null };
     } catch (err) {
-      console.error('[Auth] Sign in error:', err);
+      logger.auth.error('Sign in exception', { error: String(err) });
       return { error: 'Erro ao fazer login. Tente novamente.' };
     }
   }, []);
@@ -205,12 +201,14 @@ export function useAuth(): UseAuthReturn {
       });
 
       if (error) {
+        logger.auth.signUp(false, { errorCode: error.message });
         return { error: formatAuthError(error.message) };
       }
 
+      logger.auth.signUp(true);
       return { error: null };
     } catch (err) {
-      console.error('[Auth] Sign up error:', err);
+      logger.auth.error('Sign up exception', { error: String(err) });
       return { error: 'Erro ao criar conta. Tente novamente.' };
     }
   }, []);
@@ -221,8 +219,9 @@ export function useAuth(): UseAuthReturn {
 
     try {
       await supabase.auth.signOut();
+      logger.auth.signOut();
     } catch (err) {
-      console.error('[Auth] Sign out error:', err);
+      logger.auth.error('Sign out error', { error: String(err) });
     }
   }, []);
 
@@ -245,7 +244,6 @@ export function useAuth(): UseAuthReturn {
       const profile = profileData as UserProfile | null;
 
       // Força refresh do status de assinatura (limpa cache e verifica novamente)
-      console.log('[Auth] Refreshing subscription status');
       const hasVoiceAccess = await refreshSubscriptionStatus();
 
       setAuthState(prev => ({
@@ -254,7 +252,7 @@ export function useAuth(): UseAuthReturn {
         hasVoiceAccess,
       }));
     } catch (error) {
-      console.error('[Auth] Error refreshing profile:', error);
+      logger.auth.error('Error refreshing profile', { error: String(error) });
     }
   }, []); // Sem dependências para evitar loop
 

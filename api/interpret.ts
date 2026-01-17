@@ -3,6 +3,7 @@
 // Vercel Serverless Function
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { serverLog, getClientIP } from '../src/lib/server-logger';
 
 // CORS - Domínios permitidos
 const ALLOWED_ORIGINS = [
@@ -92,6 +93,9 @@ EXAMPLES:
 "metade de dez e meio" → {"expression":"10 1/2 / 2"}`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const startTime = Date.now();
+  const ip = getClientIP(req.headers as Record<string, string | string[] | undefined>);
+
   // CORS
   const origin = req.headers.origin || '';
   if (isAllowedOrigin(origin)) {
@@ -113,18 +117,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Rate limiting
-  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || 
-             req.socket?.remoteAddress || 
-             'unknown';
-  
   if (!checkRateLimit(ip)) {
+    await serverLog({
+      module: 'API',
+      action: 'interpret_rate_limited',
+      success: false,
+      ip,
+    });
     return res.status(429).json({ error: 'Too many requests. Please wait a moment.' });
   }
 
   // Check API key
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    console.error('[API] Missing OPENAI_API_KEY');
+    await serverLog({
+      module: 'API',
+      action: 'interpret_config_error',
+      success: false,
+      message: 'Missing OPENAI_API_KEY',
+    });
     return res.status(500).json({ error: 'Server configuration error' });
   }
 
@@ -189,14 +200,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!whisperResponse.ok) {
       const error = await whisperResponse.text();
-      console.error('[API] Whisper error:', error);
+      await serverLog({
+        module: 'Voice',
+        action: 'whisper_error',
+        success: false,
+        duration_ms: Date.now() - startTime,
+        ip,
+        context: { error },
+      });
       return res.status(500).json({ error: 'Transcription failed' });
     }
 
     const whisperResult = await whisperResponse.json();
     const transcribedText = whisperResult.text;
-    
-    console.log('[API] Transcription:', transcribedText);
 
     // 2. GPT interpretation
     const gptResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -219,31 +235,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!gptResponse.ok) {
       const error = await gptResponse.text();
-      console.error('[API] GPT error:', error);
+      await serverLog({
+        module: 'Voice',
+        action: 'gpt_error',
+        success: false,
+        duration_ms: Date.now() - startTime,
+        ip,
+        context: { error, transcription: transcribedText },
+      });
       return res.status(500).json({ error: 'Interpretation failed' });
     }
 
     const gptResult = await gptResponse.json();
     const content = gptResult.choices[0]?.message?.content || '{}';
-    
-    console.log('[API] GPT result:', content);
-
     const parsed = JSON.parse(content);
 
-    // Log for analytics (structured)
-    console.log(JSON.stringify({
-      event: 'voice_calculation',
-      transcription: transcribedText,
-      expression: parsed.expression,
-      mode: parsed.mode,
-      ip: ip.substring(0, 10) + '...',
-      timestamp: new Date().toISOString(),
-    }));
+    // Log success
+    await serverLog({
+      module: 'Voice',
+      action: 'interpret',
+      success: true,
+      duration_ms: Date.now() - startTime,
+      ip,
+      context: { transcription: transcribedText, expression: parsed.expression },
+    });
 
     return res.status(200).json(parsed);
 
   } catch (error) {
-    console.error('[API] Error:', error);
+    await serverLog({
+      module: 'API',
+      action: 'interpret_exception',
+      success: false,
+      duration_ms: Date.now() - startTime,
+      message: String(error),
+      ip,
+    });
     return res.status(500).json({ error: 'Server processing error' });
   }
 }

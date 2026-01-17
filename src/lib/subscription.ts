@@ -4,6 +4,7 @@
 import { supabase } from './supabase';
 import { Preferences } from '@capacitor/preferences';
 import { Capacitor } from '@capacitor/core';
+import { logger } from './logger';
 
 const SUBSCRIPTION_CACHE_KEY = 'calculator_subscription_status';
 const CACHE_DURATION = 1000 * 60 * 5; // 5 minutos
@@ -82,7 +83,6 @@ async function setCache(data: CachedSubscription): Promise<void> {
  */
 export async function hasActiveSubscription(): Promise<boolean> {
   if (!supabase) {
-    console.warn('[Subscription] Supabase not available');
     return false;
   }
 
@@ -90,19 +90,8 @@ export async function hasActiveSubscription(): Promise<boolean> {
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
-      console.log('[Subscription] No user logged in');
       return false;
     }
-
-    console.log('[Subscription] Checking for user:', user.id);
-
-    // Primeiro, busca TODAS as subscriptions do usuário (para debug)
-    const { data: allSubs, error: allError } = await supabase
-      .from('subscriptions')
-      .select('*')
-      .eq('user_id', user.id);
-
-    console.log('[Subscription] All subscriptions for user:', allSubs, 'Error:', allError);
 
     // Busca subscription específica do calculator
     // Tenta tanto 'calculator' quanto 'calculator-pro' para compatibilidade
@@ -115,18 +104,15 @@ export async function hasActiveSubscription(): Promise<boolean> {
 
     // PGRST116 = "No rows found" - isso é esperado para usuários sem assinatura
     if (error && error.code !== 'PGRST116') {
-      console.error('[Subscription] Error fetching subscription:', error);
+      logger.subscription.error('Error fetching subscription', { error: error.message });
       return false;
     }
 
     if (!data) {
-      console.log('[Subscription] No subscription found for user with app calculator/calculator-pro');
       return false;
     }
 
     const subscription = data as SubscriptionData;
-
-    console.log('[Subscription] Found subscription:', subscription);
 
     // Verifica se está ativo ou em trial
     const isActive = subscription.status === 'active' || subscription.status === 'trialing';
@@ -137,11 +123,9 @@ export async function hasActiveSubscription(): Promise<boolean> {
 
     const hasAccess = isActive && notExpired;
 
-    console.log('[Subscription] Status:', subscription.status, 'isActive:', isActive, 'notExpired:', notExpired, 'Has access:', hasAccess);
-
     return hasAccess;
   } catch (err) {
-    console.error('[Subscription] Exception checking subscription:', err);
+    logger.subscription.error('Exception checking subscription', { error: String(err) });
     return false;
   }
 }
@@ -153,7 +137,6 @@ export async function hasActiveSubscription(): Promise<boolean> {
 export async function checkPremiumAccess(): Promise<boolean> {
   // Evita chamadas simultâneas
   if (isChecking) {
-    console.log('[Subscription] Already checking, returning cached or false');
     return memoryCache?.hasAccess ?? false;
   }
 
@@ -167,16 +150,13 @@ export async function checkPremiumAccess(): Promise<boolean> {
       const isExpired = Date.now() - cached.checkedAt > CACHE_DURATION;
 
       if (!isExpired) {
-        console.log('[Subscription] Using cached status:', cached.hasAccess);
+        logger.subscription.check(cached.hasAccess, true);
         return cached.hasAccess;
-      } else {
-        console.log('[Subscription] Cache expired, checking Supabase');
       }
     }
 
     // Verifica direto no Supabase (tabela subscriptions)
     const hasAccess = await hasActiveSubscription();
-    console.log('[Subscription] Supabase check result:', hasAccess);
 
     // Salvar no cache
     await setCache({
@@ -184,9 +164,10 @@ export async function checkPremiumAccess(): Promise<boolean> {
       checkedAt: Date.now(),
     });
 
+    logger.subscription.check(hasAccess, false);
     return hasAccess;
   } catch (err) {
-    console.error('[Subscription] Error checking premium access:', err);
+    logger.subscription.error('Error checking premium access', { error: String(err) });
     return false;
   } finally {
     isChecking = false;
@@ -206,10 +187,8 @@ export async function clearSubscriptionCache(): Promise<void> {
     if (Capacitor.isNativePlatform()) {
       await Preferences.remove({ key: SUBSCRIPTION_CACHE_KEY });
     }
-
-    console.log('[Subscription] Cache cleared');
   } catch (err) {
-    console.error('[Subscription] Error clearing cache:', err);
+    logger.subscription.error('Error clearing cache', { error: String(err) });
   }
 }
 
@@ -218,7 +197,6 @@ export async function clearSubscriptionCache(): Promise<void> {
  * Útil para forçar uma verificação após retornar do checkout
  */
 export async function refreshSubscriptionStatus(): Promise<boolean> {
-  console.log('[Subscription] Forcing subscription refresh');
   await clearSubscriptionCache();
   return checkPremiumAccess();
 }

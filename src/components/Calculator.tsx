@@ -4,6 +4,7 @@
 import { useCallback } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { useCalculator, useOnlineStatus, useVoiceRecorder } from '../hooks';
+import { logger } from '../lib/logger';
 import type { VoiceState, VoiceResponse } from '../types/calculator';
 
 // Teclado de frações
@@ -72,11 +73,10 @@ export default function Calculator({
 
   // Handler para quando gravação terminar
   const handleAudioUpload = useCallback(async (audioBlob: Blob) => {
-    console.log('[Voice] Audio upload started, blob size:', audioBlob.size, 'bytes');
-    console.log('[Voice] API endpoint:', API_ENDPOINT);
+    const startTime = Date.now();
 
     if (audioBlob.size === 0) {
-      console.error('[Voice] Empty audio blob - recording may have failed');
+      logger.voice.error('Empty audio blob - recording may have failed', { blobSize: 0 });
       setVoiceState('idle');
       return;
     }
@@ -87,32 +87,41 @@ export default function Calculator({
     formData.append('file', audioBlob, 'recording.webm');
 
     try {
-      console.log('[Voice] Sending request to API...');
       const response = await fetch(API_ENDPOINT, {
         method: 'POST',
         body: formData,
       });
 
-      console.log('[Voice] Response status:', response.status);
+      const duration = Date.now() - startTime;
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[Voice] API Error:', response.status, errorText);
+        logger.voice.apiCall(duration, false, {
+          status: response.status,
+          error: errorText,
+        });
         throw new Error(`API Error: ${response.status}`);
       }
 
       const data: VoiceResponse = await response.json();
-      console.log('[Voice] API response:', data);
 
       if (data.expression) {
         // Usa setExpressionAndCompute para atualizar expressão E calcular o resultado
         const result = setExpressionAndCompute(data.expression);
-        console.log('[Voice] Calculation result:', result);
+        logger.voice.apiCall(duration, true, {
+          status: response.status,
+          expression: data.expression,
+          result: result?.resultDecimal,
+        });
       } else if (data.error) {
-        console.error('[Voice] API returned error:', data.error);
+        logger.voice.apiCall(duration, false, {
+          status: response.status,
+          apiError: data.error,
+        });
       }
     } catch (error) {
-      console.error('[Voice] Error:', error);
+      const duration = Date.now() - startTime;
+      logger.voice.error('API request failed', { error: String(error), duration_ms: duration });
     } finally {
       setVoiceState('idle');
     }
@@ -121,7 +130,7 @@ export default function Calculator({
   const { startRecording, stopRecording } = useVoiceRecorder({
     onRecordingComplete: handleAudioUpload,
     onError: (error) => {
-      console.error('[Voice] Recording error:', error);
+      logger.voice.error('Recording error - microphone access denied', { error: String(error) });
       alert('Microphone access denied or not available.');
     },
   });
@@ -143,7 +152,7 @@ export default function Calculator({
 
     // Só inicia se estiver idle
     if (voiceState === 'idle') {
-      console.log('[Voice] START - Recording initiated');
+      logger.voice.start();
       setVoiceState('recording');
       startRecording();
     }
@@ -155,7 +164,7 @@ export default function Calculator({
 
     // Só para se estiver gravando
     if (voiceState === 'recording') {
-      console.log('[Voice] END - Stopping recording, will process');
+      logger.voice.stop();
       stopRecording();
       // O estado muda para 'processing' no handleAudioUpload quando receber o blob
     }
@@ -261,16 +270,18 @@ export default function Calculator({
         <div className="card left-card">
           <div className="display-section">
             <div className="display-row">
-              <div className="display-box primary">
+              {/* Total inches display - agora primeiro (invertido) */}
+              {lastResult?.isInchMode && (
+                <div className="display-box equal">
+                  <span className={`display-value ${voiceState}`}>{lastResult.resultTotalInches}</span>
+                </div>
+              )}
+              {/* Feet/inches display - agora segundo (invertido) */}
+              <div className="display-box equal">
                 <span className={`display-value ${voiceState}`}>
                   {lastResult?.isInchMode ? lastResult.resultFeetInches : displayValue}
                 </span>
               </div>
-              {lastResult?.isInchMode && (
-                <div className="display-box secondary">
-                  <span className="display-value-secondary">{lastResult.resultTotalInches}</span>
-                </div>
-              )}
             </div>
           </div>
           

@@ -162,6 +162,12 @@
   min-width: 90px;
 }
 
+/* Equal-sized display boxes (both same size and emphasis) */
+.display-box.equal {
+  flex: 1;
+  min-width: 0;
+}
+
 .display-value {
   font-size: 1.8rem;
   font-weight: 600;

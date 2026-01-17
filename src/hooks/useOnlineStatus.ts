@@ -2,6 +2,7 @@
 // Hook para monitorar status de conexão
 
 import { useState, useEffect } from 'react';
+import { logger } from '../lib/logger';
 
 /**
  * Hook que monitora se o dispositivo está online
@@ -13,8 +14,14 @@ export function useOnlineStatus(): boolean {
   );
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      logger.sync.online();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      logger.sync.offline();
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
